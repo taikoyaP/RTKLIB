@@ -936,6 +936,7 @@ extern int init_raw(raw_t *raw, int format)
     switch (format) {
         case STRFMT_CMR : ret=init_cmr (raw); break;
         case STRFMT_RT17: ret=init_rt17(raw); break;
+        case STRFMT_UBX:  ret=init_ubx (raw); break;
     }
     if (!ret) {
         free_raw(raw);
@@ -972,6 +973,7 @@ extern void free_raw(raw_t *raw)
     switch (raw->format) {
         case STRFMT_CMR : free_cmr (raw); break;
         case STRFMT_RT17: free_rt17(raw); break;
+        case STRFMT_UBX:  free_ubx (raw); break;
     }
     raw->rcv_data=NULL;
 }

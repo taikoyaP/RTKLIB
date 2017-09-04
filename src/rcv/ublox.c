@@ -66,6 +66,7 @@
 
 #define ID_NAVSOL   0x0106      /* ubx message id: nav solution info */
 #define ID_NAVTIME  0x0120      /* ubx message id: nav time gps */
+#define ID_NAVSVIN  0x013B      /* ubx message id: nav survey-in data */
 #define ID_RXMRAW   0x0210      /* ubx message id: raw measurement data */
 #define ID_RXMSFRB  0x0211      /* ubx message id: subframe buffer */
 #define ID_RXMSFRBX 0x0213      /* ubx message id: raw subframe data */
@@ -110,6 +111,20 @@ static void setI2(unsigned char *p, short          i) {memcpy(p,&i,2);}
 static void setI4(unsigned char *p, int            i) {memcpy(p,&i,4);}
 static void setR4(unsigned char *p, float          r) {memcpy(p,&r,4);}
 static void setR8(unsigned char *p, double         r) {memcpy(p,&r,8);}
+
+/* typedefs ------------------------------------------------------------------*/
+typedef struct {
+    unsigned int dur;   /* passed survey-in observation time */
+    double rb[3];       /* base position {x,y,z} (ecef) (m) */
+    double meanacc;     /* current servey-in mean position accuracy (m) */
+    unsigned int obs;   /* # of position observations used during survey-in */
+    int valid;          /* position validity (0:invalid,1:valid) */
+    int active;         /* progress (0:not,1:in-progress) */
+} survey_in_t;
+
+typedef struct {
+    survey_in_t *survey_in; /* RTK fix servey-on */
+} ubx_t;
 
 /* checksum ------------------------------------------------------------------*/
 static int checksum(unsigned char *buff, int len)
@@ -497,6 +512,65 @@ static int decode_navtime(raw_t *raw)
     week=U2(p+8);
     if ((U1(p+11)&0x03)==0x03) {
         raw->time=gpst2time(week,itow*1E-3+ftow*1E-9);
+    }
+    return 0;
+}
+/* decode ubx-nav-svin: survey-in data ---------------------------------------*/
+static int decode_navsvin(raw_t *raw)
+{
+    int meanx,meany,meanz,meanxhp,meanyhp,meanzhp;
+    int valid,active;
+    unsigned int itow,dur,obs;
+    double rb[3],meanacc;
+    ubx_t *ubx = (ubx_t *)raw->rcv_data;
+    survey_in_t *survey_in;
+    unsigned char *p=raw->buff+6;
+    
+    if (raw->format != STRFMT_UBX) {
+        return -1;
+    }
+    
+    trace(4,"decode_navsvin: len=%d\n",raw->len);
+    
+    if (raw->outtype) {
+        sprintf(raw->msgtype,"UBX NAV-SVIN  (%4d):",raw->len);
+    }
+    
+    survey_in=ubx->survey_in;
+    
+    switch(U1(p)) {
+    case 0:
+        itow=U4(p+4);
+        dur=U4(p+8);
+        survey_in->dur=dur;
+        obs=U4(p+32);
+        survey_in->obs=obs;
+        valid=U1(p+36);
+        survey_in->valid=valid;
+        active=U1(p+37);
+        survey_in->active=active;
+        trace(3,"decode_navsvin: dur=%d obs=%d active=%d\n",dur,obs,active);
+        if (valid==1) {
+            meanx=I4(p+12);
+            meany=I4(p+16);
+            meanz=I4(p+20);
+            meanxhp=I1(p+24);
+            meanyhp=I1(p+25);
+            meanzhp=I1(p+26);
+            rb[0]=((double)meanx)/100+((double)meanxhp/10000);
+            survey_in->rb[0]=rb[0];
+            rb[1]=((double)meany)/100+((double)meanyhp/10000);
+            survey_in->rb[1]=rb[1];
+            rb[2]=((double)meanz)/100+((double)meanzhp/10000);
+            survey_in->rb[2]=rb[2];
+            meanacc=((double)U4(p+28))/10000;
+            survey_in->meanacc=meanacc;
+            trace(3,"decode_navsvin: rb={%f,%f,%f} meanacc=%f\n",
+                    rb[0],rb[1],rb[2],meanacc);
+        }
+        break;
+    default:
+        break;
     }
     return 0;
 }
@@ -1038,6 +1112,7 @@ static int decode_ubx(raw_t *raw)
         case ID_RXMSFRBX: return decode_rxmsfrbx(raw);
         case ID_NAVSOL  : return decode_navsol  (raw);
         case ID_NAVTIME : return decode_navtime (raw);
+        case ID_NAVSVIN : return decode_navsvin (raw);
         case ID_TRKMEAS : return decode_trkmeas (raw);
         case ID_TRKD5   : return decode_trkd5   (raw);
         case ID_TRKSFRBX: return decode_trksfrbx(raw);
@@ -1054,6 +1129,57 @@ static int sync_ubx(unsigned char *buff, unsigned char data)
     buff[0]=buff[1]; buff[1]=data;
     return buff[0]==UBXSYNC1&&buff[1]==UBXSYNC2;
 }
+
+/*
+    Public functions (in alphabetical order):
+*/
+
+/* free_cmr - Free up CMR dependent private storage */
+extern void free_ubx(raw_t *raw)
+{
+    ubx_t *ubx=(ubx_t *)(raw->rcv_data);
+    
+    if (raw->format != STRFMT_UBX) {
+        return;
+    }
+   
+    if (ubx) {
+        if (ubx->survey_in) {
+            free(ubx->survey_in);
+            ubx->survey_in=NULL;
+        }
+       
+        free(ubx);
+        raw->rcv_data = NULL;
+    }
+}
+
+/* init_ubx = Initialize u-blox dependent private storage */
+extern int init_ubx(raw_t *raw)
+{
+    ubx_t *ubx=NULL;
+    survey_in_t *survey_in=NULL;
+    
+    if (raw->format!=STRFMT_UBX) {
+        return 0;
+    }
+    
+    if (!(ubx=(ubx_t*)calloc(1,sizeof(ubx_t)))) {
+        tracet(0, "init_ubx: unable to allocate u-blox dependent private data structure.\n");
+        return 0;
+    }
+    raw->rcv_data=(void*)ubx;
+    
+    if (!(survey_in=(survey_in_t*)calloc(1,sizeof(survey_in_t)))) {
+        tracet(0, "init_ubx: unable to allocate u-blox survey-in buffer.\n");
+        free_ubx(raw);
+        return 0;
+    }
+    ubx->survey_in=survey_in;
+    
+    return 1;
+}
+
 /* input ublox raw message from stream -----------------------------------------
 * fetch next ublox raw data and input a mesasge from stream
 * args   : raw_t *raw   IO     receiver raw data control struct
