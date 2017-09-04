@@ -132,6 +132,7 @@ ionex.o    : $(SRC)/rtklib.h
 qzslex.o   : $(SRC)/rtklib.h
 tides.o    : $(SRC)/rtklib.h
 ppp_corr.o : $(SRC)/rtklib.h
+tersus.o   : $(SRC)/rtklib.h
 
 install:
 	cp rtkrcv $(BINDIR)
