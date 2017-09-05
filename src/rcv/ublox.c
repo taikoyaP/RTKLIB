@@ -525,6 +525,9 @@ static int decode_navsvin(raw_t *raw)
     ubx_t *ubx = (ubx_t *)raw->rcv_data;
     survey_in_t *survey_in;
     unsigned char *p=raw->buff+6;
+    char *valid_str = "valid";
+    char *invalid_str = "invalid";
+    char *validity_str;
     
     if (raw->format != STRFMT_UBX) {
         return -1;
@@ -550,24 +553,29 @@ static int decode_navsvin(raw_t *raw)
         active=U1(p+37);
         survey_in->active=active;
         trace(3,"decode_navsvin: dur=%d obs=%d active=%d\n",dur,obs,active);
+        
+        meanx=I4(p+12);
+        meany=I4(p+16);
+        meanz=I4(p+20);
+        meanxhp=I1(p+24);
+        meanyhp=I1(p+25);
+        meanzhp=I1(p+26);
+        rb[0]=((double)meanx)/100+((double)meanxhp/10000);
+        survey_in->rb[0]=rb[0];
+        rb[1]=((double)meany)/100+((double)meanyhp/10000);
+        survey_in->rb[1]=rb[1];
+        rb[2]=((double)meanz)/100+((double)meanzhp/10000);
+        survey_in->rb[2]=rb[2];
+        meanacc=((double)U4(p+28))/10000;
+        survey_in->meanacc=meanacc;
+        
         if (valid==1) {
-            meanx=I4(p+12);
-            meany=I4(p+16);
-            meanz=I4(p+20);
-            meanxhp=I1(p+24);
-            meanyhp=I1(p+25);
-            meanzhp=I1(p+26);
-            rb[0]=((double)meanx)/100+((double)meanxhp/10000);
-            survey_in->rb[0]=rb[0];
-            rb[1]=((double)meany)/100+((double)meanyhp/10000);
-            survey_in->rb[1]=rb[1];
-            rb[2]=((double)meanz)/100+((double)meanzhp/10000);
-            survey_in->rb[2]=rb[2];
-            meanacc=((double)U4(p+28))/10000;
-            survey_in->meanacc=meanacc;
-            trace(3,"decode_navsvin: rb={%f,%f,%f} meanacc=%f\n",
-                    rb[0],rb[1],rb[2],meanacc);
+            validity_str=valid_str;
+        } else {
+            validity_str=invalid_str;
         }
+        trace(3,"decode_navsvin: %s rb={%f,%f,%f} meanacc=%f\n",
+                validity_str,rb[0],rb[1],rb[2],meanacc);
         break;
     default:
         break;
